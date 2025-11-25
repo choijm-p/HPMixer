@@ -5,7 +5,7 @@ data='ETTh1'
 channels=7
 seq_len=96
 pred_len=96
-base_dir=./HPMixer_code
+base_dir=./HPMixer_Code
 freq=h
 
 python3 -u $base_dir/run_longExp.py \
@@ -14,7 +14,7 @@ python3 -u $base_dir/run_longExp.py \
  --d_ff 256 --d_model 128 --dropout 0.49518026450042374 \
  --e_layers 3 --fc_dropout 0 \
  --learning_rate 0.004953163360245571 \
- --patch_size 32 --sub_patch_size 12 \
+ --patch_size 32 --fine_patch_size 12 \
  --wavelet_j 3 --wavelet db1 \
- --batch_size 64 --use_gpu True
+ --batch_size 64 --use_gpu False
 

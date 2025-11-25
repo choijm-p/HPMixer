@@ -172,7 +172,7 @@ class Model(nn.Module):
         self.use_revin = configs.revin
         self.dropout_val = configs.dropout
         self.patch_len = configs.patch_size
-        self.sub_patch_len = configs.sub_patch_size
+        self.fine_patch_len = configs.fine_patch_size
         self.num_levels = configs.wavelet_j
         self.num_scales = self.num_levels + 1
 
@@ -199,10 +199,10 @@ class Model(nn.Module):
 
         if self.patch_len >= self.seq_len or self.seq_len % self.patch_len != 0:
             self.patch_len = self.seq_len // 2
-        self.patching_big = Patching(self.patch_len)
-        self.patching_sub = Patching(self.sub_patch_len)
+        self.patching_coarse = Patching(self.patch_len)
+        self.patching_sub = Patching(self.fine_patch_len)
         self.unpatching_sub = UnPatching()
-        self.unpatching_big = UnPatching()
+        self.unpatching_coarse = UnPatching()
 
         self.enc_embedding = DataEmbedding_inverted(
             self.patch_len,  
@@ -236,38 +236,38 @@ class Model(nn.Module):
 
         self.encoder_out_proj = nn.Linear(configs.d_model, self.patch_len)
 
-        num_sub_patches = (self.patch_len + self.sub_patch_len - 1) // self.sub_patch_len
-        num_big_patches = (self.seq_len + self.patch_len - 1) // self.patch_len
-        big_patch_mlp_dim = num_big_patches * self.patch_len
-        sub_patch_mlp_dim = num_sub_patches * self.sub_patch_len
+        num_fine_patches = (self.patch_len + self.fine_patch_len - 1) // self.fine_patch_len
+        num_coarse_patches = (self.seq_len + self.patch_len - 1) // self.patch_len
+        coarse_patch_mlp_dim = num_coarse_patches * self.patch_len
+        fine_patch_mlp_dim = num_fine_patches * self.fine_patch_len
 
-        self.inter_sub_patch_mlps = nn.ModuleList()
+        self.inter_fine_patch_mlps = nn.ModuleList()
         self.batch_norms = nn.ModuleList()
-        self.inter_big_patch_mlps = nn.ModuleList()
-        self.sub_res_mlps = nn.ModuleList()
-        self.big_res_mlps = nn.ModuleList()
+        self.inter_coarse_patch_mlps = nn.ModuleList()
+        self.fine_res_mlps = nn.ModuleList()
+        self.coarse_res_mlps = nn.ModuleList()
         
-        self.big_patch_len_mlps = nn.ModuleList()
-        self.sub_patch_len_mlps = nn.ModuleList()
+        self.coarse_patch_len_mlps = nn.ModuleList()
+        self.fine_patch_len_mlps = nn.ModuleList()
 
         for _ in range(self.num_scales):
-            self.big_patch_len_mlps.append(nn.Sequential(nn.Linear(self.patch_len, self.d_model), nn.GELU(),
+            self.coarse_patch_len_mlps.append(nn.Sequential(nn.Linear(self.patch_len, self.d_model), nn.GELU(),
                                                          nn.Dropout(p=self.dropout_val),
                                                          nn.Linear(self.d_model, self.patch_len)))
             
-            self.sub_patch_len_mlps.append(nn.Sequential(nn.Linear(self.sub_patch_len, self.d_model), nn.GELU(),
+            self.fine_patch_len_mlps.append(nn.Sequential(nn.Linear(self.fine_patch_len, self.d_model), nn.GELU(),
                                                          nn.Dropout(p=self.dropout_val),
-                                                         nn.Linear(self.d_model, self.sub_patch_len)))
+                                                         nn.Linear(self.d_model, self.fine_patch_len)))
             
             
-            self.inter_sub_patch_mlps.append(nn.Sequential(
-                nn.Linear(sub_patch_mlp_dim, self.d_model), nn.GELU(),
+            self.inter_fine_patch_mlps.append(nn.Sequential(
+                nn.Linear(fine_patch_mlp_dim, self.d_model), nn.GELU(),
                 nn.Dropout(p=self.dropout_val),
-                nn.Linear(self.d_model, sub_patch_mlp_dim)))
+                nn.Linear(self.d_model, fine_patch_mlp_dim)))
             self.batch_norms.append(nn.BatchNorm1d(self.enc_in))
-            self.inter_big_patch_mlps.append(nn.Sequential(
-                nn.Linear(big_patch_mlp_dim, self.d_model), nn.GELU(),
-                nn.Dropout(p=self.dropout_val), nn.Linear(self.d_model, big_patch_mlp_dim)))
+            self.inter_coarse_patch_mlps.append(nn.Sequential(
+                nn.Linear(coarse_patch_mlp_dim, self.d_model), nn.GELU(),
+                nn.Dropout(p=self.dropout_val), nn.Linear(self.d_model, coarse_patch_mlp_dim)))
   
         self.mlp_residual = nn.Sequential(
             nn.Linear(self.seq_len, self.d_model), nn.GELU(),
@@ -285,59 +285,57 @@ class Model(nn.Module):
             length=self.seq_len
         )
         
-        residual_2 = x0_permuted - periodicity_in_sample
-        coeffs = self.swt_decomp(residual_2)
+        residual = x0_permuted - periodicity_in_sample
+        coeffs = self.swt_decomp(residual)
         processed_coeffs_list = []
 
         for m in range(self.num_scales):
             scale_coeffs = coeffs[:, :, m, :]
             
-            big_patches, pad_len_big = self.patching_big(scale_coeffs)
+            coarse_patches, pad_len_coarse = self.patching_coarse(scale_coeffs)
             
-            residual_for_encoder = big_patches
+            residual_for_encoder = coarse_patches
             
-            # (B, C, N, P) -> (B*N, C, P)
-            B_enc, C_enc, N_big, P_big = big_patches.shape
-            encoder_input = big_patches.permute(0, 2, 1, 3).reshape(B_enc * N_big, C_enc, P_big).permute(0,2,1)
+            B_enc, C_enc, N_coarse, P_coarse = coarse_patches.shape
+            encoder_input = coarse_patches.permute(0, 2, 1, 3).reshape(B_enc * N_coarse, C_enc, P_coarse).permute(0,2,1)
             enc_embedded_input = self.enc_embedding(encoder_input, None)
             enc_output, _ = self.encoder(enc_embedded_input, attn_mask=None)
 
             projected_output = self.encoder_out_proj(enc_output)
 
-            #(B*N, C, P) -> (B, C, N, P)
-            processed_patches = projected_output.view(B_enc, N_big, C_enc, P_big).permute(0, 2, 1, 3)
+            processed_patches = projected_output.view(B_enc, N_coarse, C_enc, P_coarse).permute(0, 2, 1, 3)
 
-            big_patches = residual_for_encoder + processed_patches
+            coarse_patches = residual_for_encoder + processed_patches
 
-            N_big, P_big = big_patches.shape[-2:]
-            big_patches_flat = big_patches.reshape(-1, P_big)
-            sub_patches, pad_len_sub = self.patching_sub(big_patches_flat)
+            N_coarse, P_coarse = coarse_patches.shape[-2:]
+            coarse_patches_flat = coarse_patches.reshape(-1, P_coarse)
+            fine_patches, pad_len_sub = self.patching_sub(coarse_patches_flat)
             
-            sub_patches_out = self.sub_patch_len_mlps[m](sub_patches)
-            sub_patche_out = sub_patches_out + sub_patches
+            fine_patches_out = self.fine_patch_len_mlps[m](fine_patches)
+            fine_patche_out = fine_patches_out + fine_patches
             
-            big_patches_processed_flat = self.unpatching_sub(sub_patche_out, pad_len_sub)
-            big_patches_processed_flat = self.batch_norms[m](big_patches_processed_flat.reshape(B,C,-1))
-            big_patches_processed = big_patches_processed_flat.view(B, C, N_big, P_big)
+            coarse_patches_processed_flat = self.unpatching_sub(fine_patche_out, pad_len_sub)
+            coarse_patches_processed_flat = self.batch_norms[m](coarse_patches_processed_flat.reshape(B,C,-1))
+            coarse_patches_processed = coarse_patches_processed_flat.view(B, C, N_coarse, P_coarse)
 
-            res_identity_big = big_patches_processed
-            blended_res_big = res_identity_big
+            res_identity_coarse = coarse_patches_processed
+            blended_res_coarse = res_identity_coarse
 
-            big_patches_flat = big_patches_processed.flatten(start_dim=2)
-            mlp_output_flat = self.inter_big_patch_mlps[m](big_patches_flat)
-            mlp_output_reshaped = mlp_output_flat.view(B, C, N_big, P_big)
-            big_patches_processed = mlp_output_reshaped + blended_res_big
-            big_patches_processed_out = self.big_patch_len_mlps[m](big_patches_processed)
-            big_patches_processed_out = big_patches_processed_out + big_patches_processed
+            coarse_patches_flat = coarse_patches_processed.flatten(start_dim=2)
+            mlp_output_flat = self.inter_coarse_patch_mlps[m](coarse_patches_flat)
+            mlp_output_reshaped = mlp_output_flat.view(B, C, N_coarse, P_coarse)
+            coarse_patches_processed = mlp_output_reshaped + blended_res_coarse
+            coarse_patches_processed_out = self.coarse_patch_len_mlps[m](coarse_patches_processed)
+            coarse_patches_processed_out = coarse_patches_processed_out + coarse_patches_processed
 
-            processed_scale = self.unpatching_big(big_patches_processed, pad_len_big)
+            processed_scale = self.unpatching_coarse(coarse_patches_processed, pad_len_coarse)
             processed_coeffs_list.append(processed_scale)
         
         processed_coeffs = torch.stack(processed_coeffs_list, dim=2)
-        reconstructed_residual_2 = self.swt_recon(processed_coeffs)
+        reconstructed_residual = self.swt_recon(processed_coeffs)
         
-        mlp_output = self.mlp_residual(reconstructed_residual_2)
-        out_residual = mlp_output + reconstructed_residual_2
+        mlp_output = self.mlp_residual(reconstructed_residual)
+        out_residual = mlp_output + reconstructed_residual
         residual_forecast = self.pred_layer_residual(out_residual)
         
         periodicity_forecast = self.mlp_cycle_module(

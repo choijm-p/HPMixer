@@ -14,7 +14,7 @@ python3 -u $base_dir/run_longExp.py \
  --d_ff 128 --d_model 512 --dropout 0.6686298084228761 \
  --e_layers 2 --fc_dropout 0.1 \
  --learning_rate 0.0042997548748623625 \
- --patch_size 16 --sub_patch_size 8 \
+ --patch_size 16 --fine_patch_size 8 \
  --wavelet_j 1 --wavelet db1 \
  --batch_size 64 --use_gpu True
 
