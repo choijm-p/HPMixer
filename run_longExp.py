@@ -60,7 +60,7 @@ parser.add_argument('--lradj', type=str, default='type1', help='adjust learning 
 parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
 
 # Data Loader
-parser.add_argument('--model', type=str, default='HPMixer')
+parser.add_argument('--model', type=str, default='NPMixer')
 parser.add_argument('--data', type=str, default='ETTh1')
 parser.add_argument('--root_path', type=str, default='./dataset/')
 parser.add_argument('--data_path', type=str, default='ETTh1.csv')
@@ -76,23 +76,25 @@ parser.add_argument('--label_len', type=int, default=48)
 parser.add_argument('--pred_len', type=int, default=96)
 parser.add_argument('--enc_in', type=int, default=7)             
 
-# HPMixer
-parser.add_argument('--d_model', type=int, default=128)
-parser.add_argument('--d_ff', type=int, default=128)
-parser.add_argument('--dropout', type=float, default=0.5)
-parser.add_argument('--e_layers', type=int, default=2)
-parser.add_argument('--fc_dropout', type=float, default=0.0)
-parser.add_argument('--wavelet', type=str, default='db1')             
-parser.add_argument('--wavelet_j', type=int, default=2)               
-parser.add_argument('--patch_size', type=int, default=16)
-parser.add_argument('--fine_patch_size', type=int, default=8)
-parser.add_argument('--alpha', type=float, default=1.0)
-parser.add_argument('--cycle', type=int, default=24)                  
-parser.add_argument('--embed', type=str, default='fixed')             
-parser.add_argument('--activation', type=str, default='gelu')
-parser.add_argument('--factor', type=int, default=1)                 
-parser.add_argument('--output_attention', type=str2bool, default=False)
-parser.add_argument('--n_heads', type=int, default=8)
+# NPMixer
+parser.add_argument('--d_model', type=int, default=64, help='dimension of model')
+parser.add_argument('--d_ff', type=int, default=128, help='dimension of fcn')
+parser.add_argument('--e_layers', type=int, default=5, help='num of encoder layers (Channel-Mixing)')
+parser.add_argument('--n_heads', type=int, default=8, help='num of heads')
+parser.add_argument('--dropout', type=float, default=0.5381, help='dropout probability')
+parser.add_argument('--activation', type=str, default='gelu', help='activation function')
+parser.add_argument('--wavelet', type=str, default='db1', help='initial wavelet basis (e.g., db1, haar)')
+parser.add_argument('--wavelet_j', type=int, default=3, help='number of SWT decomposition levels (J)')
+parser.add_argument('--trainable_wavelet', type=str2bool, default=True, help='enable Learnable SWT filters')
+parser.add_argument('--patch_len', type=int, default=16, help='patch length (P)')
+parser.add_argument('--stride', type=int, default=8, help='stride between patches')
+parser.add_argument('--max_mix_levels', type=int, default=3, help='number of hierarchical mixing stages (K)')
+parser.add_argument('--alpha', type=float, default=0.0, help='initial value for learnable gate alpha')
+parser.add_argument('--output_attention', type=str2bool, default=False, help='whether to output attention in encoder')
+parser.add_argument('--factor', type=int, default=1, help='attn factor')
+parser.add_argument('--embed', type=str, default='timeF',
+                    help='time features encoding, options:[timeF, fixed, learned]')
+parser.add_argument('--fc_dropout', type=float, default=0.1, help='fully connected dropout')
 
 # RevIN
 parser.add_argument('--revin', type=str2bool, default=True)
@@ -104,9 +106,6 @@ parser.add_argument('--gpu', type=int, default=1, help='gpu')
 parser.add_argument('--use_multi_gpu', action='store_true', help='use multiple gpus', default=False)
 parser.add_argument('--devices', type=str, default='0,1,2,3', help='device ids of multile gpus')
 parser.add_argument('--test_flop', action='store_true', default=False, help='See utils/tools for usage')
-
-# Cycle
-parser.add_argument('--use_cycle', type=str2bool, default=True)
 
 
 args = parser.parse_args()

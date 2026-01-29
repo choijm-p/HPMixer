@@ -10,9 +10,8 @@ import torch.nn as nn
 from torch import optim
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from data_provider.data_factory import data_provider
-from data_provider.cycle_data_factory import data_provider as cycle_provider
 from exp.exp_basic import Exp_Basic
-from models import HPMixer
+from models import NPMixer
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
@@ -25,10 +24,10 @@ class Exp_Main(Exp_Basic):
 
     def _build_model(self):
         model_dict = {
-            'HPMixer': HPMixer
+            'NPMixer': NPMixer
         }
 
-        self.non_transformer_model_list = {'HPMixer'} 
+        self.non_transformer_model_list = {'NPMixer'} 
         model = model_dict[self.args.model].Model(self.args).float()
 
         if self.args.use_multi_gpu and self.args.use_gpu:
@@ -36,12 +35,8 @@ class Exp_Main(Exp_Basic):
         return model
 
     def _get_data(self, flag):
-        if self.args.use_cycle:
-            from data_provider.cycle_data_factory import data_provider as cycle_provider
-            data_set, data_loader = cycle_provider(self.args, flag)
-        else:
-            from data_provider.data_factory import data_provider
-            data_set, data_loader = data_provider(self.args, flag)
+        from data_provider.data_factory import data_provider
+        data_set, data_loader = data_provider(self.args, flag)
         return data_set, data_loader
 
 
@@ -61,62 +56,31 @@ class Exp_Main(Exp_Basic):
         iter_count = 0
         criterion_mae = nn.L1Loss()
         
-        if self.args.use_cycle:
-            from data_provider.cycle_data_factory import data_provider as cycle_provider
-            vali_data, vali_loader = cycle_provider(self.args, flag='test')
-        else:
-            vali_data, vali_loader = self._get_data(flag='test')
+        vali_data, vali_loader = self._get_data(flag='test')
         
         with torch.no_grad():
+            # dataloader produces: x, y, x_mark, y_mark
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
 
-            if self.args.use_cycle:
-                # dataloader produces: x, y, x_mark, y_mark, cycle_index
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle) in enumerate(vali_loader):
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float()
 
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float()
-                    batch_cycle = batch_cycle.int().to(self.device)
-
-                    # HPMixer does not use x_mark or y_mark, so ignore them
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_cycle)
-                    else:
-                        outputs = self.model(batch_x, batch_cycle)
-
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-
-                    pred = outputs.detach().cpu()
-                    true = batch_y.detach().cpu()
-
-                    total_loss.append(criterion(pred, true))
-                    total_loss_mae.append(criterion_mae(pred, true))
-
-            else:
-                # dataloader produces: x, y, x_mark, y_mark
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
-
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float()
-
-                    # HPMixer does not use x_mark, y_mark
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x)
-                    else:
+                # NPMixer does not use x_mark, y_mark
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
                         outputs = self.model(batch_x)
+                else:
+                    outputs = self.model(batch_x)
 
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
-                    pred = outputs.detach().cpu()
-                    true = batch_y.detach().cpu()
+                pred = outputs.detach().cpu()
+                true = batch_y.detach().cpu()
 
-                    total_loss.append(criterion(pred, true))
-                    total_loss_mae.append(criterion_mae(pred, true))
+                total_loss.append(criterion(pred, true))
+                total_loss_mae.append(criterion_mae(pred, true))
 
         if len(total_loss_mae) > 0:
             total_loss_mae = np.average(total_loss_mae)
@@ -129,17 +93,10 @@ class Exp_Main(Exp_Basic):
 
     def train(self, setting):
 
-        if self.args.use_cycle:
-            from data_provider.cycle_data_factory import data_provider as cycle_provider
-            train_data, train_loader = cycle_provider(self.args, flag='train')
-            if not self.args.train_only:
-                vali_data, vali_loader = cycle_provider(self.args, flag='val')
-                test_data, test_loader = cycle_provider(self.args, flag='test')
-        else:
-            train_data, train_loader = self._get_data(flag='train')
-            if not self.args.train_only:
-                vali_data, vali_loader = self._get_data(flag='val')
-                test_data, test_loader = self._get_data(flag='test')
+        train_data, train_loader = self._get_data(flag='train')
+        if not self.args.train_only:
+            vali_data, vali_loader = self._get_data(flag='val')
+            test_data, test_loader = self._get_data(flag='test')
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
@@ -167,88 +124,44 @@ class Exp_Main(Exp_Basic):
             self.model.train()
             epoch_time = time.time()
 
-            if not self.args.use_cycle:
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+                iter_count += 1
+                model_optim.zero_grad()
 
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
-                    iter_count += 1
-                    model_optim.zero_grad()
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
 
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float().to(self.device)
-
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x)
-                            f_dim = -1 if self.args.features == 'MS' else 0
-                            outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                            batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
-                            loss = criterion(outputs, batch_y)
-                            train_loss.append(loss.item())
-                    else:
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
                         outputs = self.model(batch_x)
                         f_dim = -1 if self.args.features == 'MS' else 0
                         outputs = outputs[:, -self.args.pred_len:, f_dim:]
                         batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
+                else:
+                    outputs = self.model(batch_x)
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
+                    loss = criterion(outputs, batch_y)
+                    train_loss.append(loss.item())
 
-                    if (i + 1) % 100 == 0:
-                        print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
-                        speed = (time.time() - time_now) / iter_count
-                        left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
-                        print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                        iter_count = 0
-                        time_now = time.time()
+                if (i + 1) % 100 == 0:
+                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
+                    speed = (time.time() - time_now) / iter_count
+                    left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
+                    print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
+                    iter_count = 0
+                    time_now = time.time()
 
-                    if self.args.use_amp:
-                        scaler.scale(loss).backward()
-                        scaler.step(model_optim)
-                        scaler.update()
-                    else:
-                        loss.backward()
-                        model_optim.step()
-
-            else:
-
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle) in enumerate(train_loader):
-                    iter_count += 1
-                    model_optim.zero_grad()
-
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float().to(self.device)
-                    batch_cycle = batch_cycle.int().to(self.device)
-
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_cycle)
-                            f_dim = -1 if self.args.features == 'MS' else 0
-                            outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                            batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
-                            loss = criterion(outputs, batch_y)
-                            train_loss.append(loss.item())
-                    else:
-                        outputs = self.model(batch_x, batch_cycle)
-                        f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                        batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
-                        loss = criterion(outputs, batch_y)
-                        train_loss.append(loss.item())
-
-                    if (i + 1) % 100 == 0:
-                        print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
-                        speed = (time.time() - time_now) / iter_count
-                        left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
-                        print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                        iter_count = 0
-                        time_now = time.time()
-
-                    if self.args.use_amp:
-                        scaler.scale(loss).backward()
-                        scaler.step(model_optim)
-                        scaler.update()
-                    else:
-                        loss.backward()
-                        model_optim.step()
+                if self.args.use_amp:
+                    scaler.scale(loss).backward()
+                    scaler.step(model_optim)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    model_optim.step()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
@@ -281,11 +194,7 @@ class Exp_Main(Exp_Basic):
 
     def test(self, setting, test=0, save_visualize=False, model=None):
 
-        if self.args.use_cycle:
-            from data_provider.cycle_data_factory import data_provider as cycle_provider
-            test_data, test_loader = cycle_provider(self.args, flag='test')
-        else:
-            test_data, test_loader = self._get_data(flag='test')
+        test_data, test_loader = self._get_data(flag='test')
 
         if test:
             print('loading model')
@@ -313,71 +222,35 @@ class Exp_Main(Exp_Basic):
         iter_count = 0
 
         with torch.no_grad():
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
 
-            if not self.args.use_cycle:
-
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float().to(self.device)
-
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x)
-                    else:
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
                         outputs = self.model(batch_x)
+                else:
+                    outputs = self.model(batch_x)
 
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
-                    outputs = outputs.detach().cpu().numpy()
-                    batch_y = batch_y.detach().cpu().numpy()
+                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
+                outputs = outputs.detach().cpu().numpy()
+                batch_y = batch_y.detach().cpu().numpy()
 
-                    pred = outputs
-                    true = batch_y
+                pred = outputs
+                true = batch_y
 
-                    preds.append(pred)
-                    trues.append(true)
-                    inputx.append(batch_x.detach().cpu().numpy())
+                preds.append(pred)
+                trues.append(true)
+                inputx.append(batch_x.detach().cpu().numpy())
 
-                    if i % 20 == 0 and save_visualize:
-                        input = batch_x.detach().cpu().numpy()
-                        gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
-                        pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
-                        visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
+                if i % 20 == 0 and save_visualize:
+                    input = batch_x.detach().cpu().numpy()
+                    gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
+                    pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
+                    visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
 
-            else:
-
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle) in enumerate(test_loader):
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float().to(self.device)
-                    batch_cycle = batch_cycle.int().to(self.device)
-
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_cycle)
-                    else:
-                        outputs = self.model(batch_x, batch_cycle)
-
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:]
-                    outputs = outputs.detach().cpu().numpy()
-                    batch_y = batch_y.detach().cpu().numpy()
-
-                    pred = outputs
-                    true = batch_y
-
-                    preds.append(pred)
-                    trues.append(true)
-                    inputx.append(batch_x.detach().cpu().numpy())
-
-                    if i % 20 == 0:
-                        input = batch_x.detach().cpu().numpy()
-                        gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
-                        pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
-                        visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
-                        np.savetxt(os.path.join(folder_path, str(i) + '.txt'), pd)
-                        np.savetxt(os.path.join(folder_path, str(i) + 'true.txt'), gt)
 
         if self.args.test_flop:
             test_params_flop((batch_x.shape[1], batch_x.shape[2]))
@@ -417,39 +290,19 @@ class Exp_Main(Exp_Basic):
         self.model.eval()
 
         with torch.no_grad():
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(pred_loader):
 
-            if not self.args.use_cycle:
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float()
 
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(pred_loader):
-
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float()
-
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x)
-                    else:
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
                         outputs = self.model(batch_x)
+                else:
+                    outputs = self.model(batch_x)
 
-                    pred = outputs.detach().cpu().numpy()
-                    preds.append(pred)
-
-            else:
-
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, batch_cycle) in enumerate(pred_loader):
-
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float()
-                    batch_cycle = batch_cycle.int().to(self.device)
-
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_cycle)
-                    else:
-                        outputs = self.model(batch_x, batch_cycle)
-
-                    pred = outputs.detach().cpu().numpy()
-                    preds.append(pred)
+                pred = outputs.detach().cpu().numpy()
+                preds.append(pred)
 
         preds = np.array(preds)
         preds = np.concatenate(preds, axis=0)
