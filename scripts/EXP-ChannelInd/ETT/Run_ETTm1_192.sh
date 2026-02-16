@@ -1,0 +1,20 @@
+#!/bin/bash
+data_path=ETTm1.csv
+root_path=./HPMixer_Code/dataset/
+data='ETTm1'
+channels=7
+seq_len=96
+pred_len=192
+base_dir=./HPMixer_Code
+freq=t
+
+python3 -u $base_dir/run_longExp.py \
+ --pred_len $pred_len --seq_len $seq_len --model HPMixer \
+ --data_path $data_path --root_path $root_path --freq $freq --data $data --enc_in $channels \
+ --d_ff 512 --d_model 512 --dropout 0.4473058737392995 \
+ --e_layers 3 --fc_dropout 0 \
+ --learning_rate 0.003984857458575525 \
+ --patch_size 16 --fine_patch_size 8 \
+ --wavelet_j 2 --wavelet db1 \
+ --batch_size 64 --use_gpu True
+
