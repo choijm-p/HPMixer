@@ -1,11 +1,11 @@
 #!/bin/bash
 data_path=electricity.csv
-root_path=./HPMixer_Code/dataset/
+root_path=./HPMixer/dataset/
 data='custom'
 channels=321
 seq_len=96
 pred_len=336
-base_dir=./HPMixer_Code
+base_dir=./HPMixer
 freq=h
 
 python3 -u $base_dir/run_longExp.py \

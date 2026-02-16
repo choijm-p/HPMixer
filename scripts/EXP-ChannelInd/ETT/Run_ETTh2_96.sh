@@ -1,11 +1,11 @@
 #!/bin/bash
 data_path=ETTh2.csv
-root_path=./HPMixer_Code/dataset/
+root_path=./HPMixer/dataset/
 data='ETTh2'
 channels=7
 seq_len=96
 pred_len=96
-base_dir=./HPMixer_Code
+base_dir=./HPMixer
 freq=h
 
 python3 -u $base_dir/run_longExp.py \
