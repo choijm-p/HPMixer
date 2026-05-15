@@ -63,9 +63,9 @@ class Exp_Main(Exp_Basic):
         
         if self.args.use_cycle:
             from data_provider.cycle_data_factory import data_provider as cycle_provider
-            vali_data, vali_loader = cycle_provider(self.args, flag='test')
+            vali_data, vali_loader = cycle_provider(self.args, flag='vali')
         else:
-            vali_data, vali_loader = self._get_data(flag='test')
+            vali_data, vali_loader = self._get_data(flag='vali')
         
         with torch.no_grad():
 
