@@ -53,20 +53,18 @@ class Exp_Main(Exp_Basic):
         criterion = nn.MSELoss()
         return criterion
 
-    def vali(self, vali_data = None, vali_loader= None, criterion = None, vali_iterator = None):
+    def vali(self, vali_data=None, vali_loader=None, criterion=None, vali_iterator=None):
         total_loss = []
         total_loss_mae = []
         self.model.eval()
-        vali_steps = self.args.seq_len
-        iter_count = 0
         criterion_mae = nn.L1Loss()
-        
-        if self.args.use_cycle:
-            from data_provider.cycle_data_factory import data_provider as cycle_provider
-            vali_data, vali_loader = cycle_provider(self.args, flag='vali')
-        else:
-            vali_data, vali_loader = self._get_data(flag='vali')
-        
+
+        # Only create validation loader if one was not passed in.
+        if vali_loader is None:
+            if self.args.use_cycle:
+                vali_data, vali_loader = cycle_provider(self.args, flag='val')
+            else:
+                vali_data, vali_loader = self._get_data(flag='val')
         with torch.no_grad():
 
             if self.args.use_cycle:
